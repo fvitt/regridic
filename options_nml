@@ -1,0 +1,6 @@
+&options
+ infile = '/terminator-data1/fvitt/inputdata/atm/waccm/ic/waccmx_aqua_ne5np4_126L_c191104.nc'
+ imeshfile = '/terminator-data1/fvitt/inputdata/atm/cam/coords/ne5np4_esmf_20191204.nc'
+ omeshfile = '/terminator-data1/fvitt/inputdata/atm/cam/coords/ne16np4_esmf_191122.nc'
+ outfile = './ne16np4_reggrided_test.nc'
+/
