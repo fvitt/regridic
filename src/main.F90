@@ -234,7 +234,8 @@ program main
            endif
 
         else
-           stop "type not recognized for copy for var "//trim(name)
+           write(*,*) "type not recognized for copy for var "//trim(name)
+           stop "type not recognized for copy"
         end if
 
      else
