@@ -8,7 +8,7 @@ program main
   integer,parameter :: r8 = selected_real_kind(12) ! 8 byte real
   integer,parameter :: r4 = selected_real_kind( 6) ! 4 byte real
 
-  character(len=512) :: infile='NONE', outfile='NONE', imeshfile='NONE', omeshfile='NONE'
+  character(len=512) :: infile='NONE', outfile='NONE', imeshfile='NONE', imeshfile_d='NONE', omeshfile='NONE'
   integer :: ncid, out_ncid
 
   integer :: varid, ndims, nvars
@@ -16,20 +16,26 @@ program main
   integer, allocatable :: dimids(:)
   character(len=64) :: name
   integer :: coldimid, timedimid, levdimid, ilevdimid
+  integer :: col_d_did
 
-  type(ESMF_Mesh) :: imesh, omesh
+  type(ESMF_Mesh) :: imesh, imesh_d, omesh
   integer :: rc
-  integer                 :: spatialDim
-  integer                 :: numOwnedElements
-  real(ESMF_KIND_R8), allocatable :: ownedElemCoords(:)
-  real(r8), allocatable :: imeshlats(:), imeshlons(:)
-  real(r8), allocatable :: omeshlats(:), omeshlons(:)
-  integer :: ncols, n, ncolso, xtype, natts, t, ntimes, nlevs, nilevs, k
-  real(r8), allocatable :: ilats(:), ilons(:)
 
-  type(ESMF_Field) :: ifield, ofield
+  real(r8), pointer :: omeshlats(:), omeshlons(:)
+  real(r8), pointer :: omeshlats_d(:), omeshlons_d(:)
+  integer :: ncols, ncols_d, n, ncolso, xtype, natts, t, ntimes, nlevs, nilevs, k
+  integer :: num_cols_in
+  real(r8), allocatable :: ilats(:), ilons(:)
+  real(r8), allocatable :: ilats_d(:), ilons_d(:)
+
   type(ESMF_ArraySpec) :: arrayspec
-  type(ESMF_RouteHandle) :: routeHandle
+
+  type(ESMF_Field), target :: ifield, ofield
+  type(ESMF_Field), target :: ifield_d, ofield_d
+  type(ESMF_Field), pointer :: ifld_ptr, ofld_ptr
+  type(ESMF_RouteHandle), target :: routeHandle
+  type(ESMF_RouteHandle), target :: routeHandle_d
+  type(ESMF_RouteHandle), pointer :: rh_ptr
 
   integer, parameter :: nchars = 8
   real(r8) :: x
@@ -39,13 +45,21 @@ program main
   integer, allocatable :: int_arr(:)
   real(r8), allocatable :: dbl_arr(:)
   real(r8), allocatable :: dbl_arr2d(:,:)
-  real(r4), allocatable :: input_arr(:)
-  real(r4), allocatable :: output_arr(:)
+  real(r4), pointer :: input_arr(:)
+  real(r4), pointer :: output_arr(:)
+  real(r4), pointer :: input_arr_d(:)
+  real(r4), pointer :: output_arr_d(:)
+  real(r4), pointer :: input_arr_ptr(:)
+  real(r4), pointer :: output_arr_ptr(:)
 
   character(len=*), parameter :: nml_file = 'options_nml'
   integer :: unitn
+  logical :: cslam_in
+  logical :: cslam_out
 
-  namelist /options/ infile, outfile, imeshfile, omeshfile
+  cslam_out = .false.
+
+  namelist /options/ infile, outfile, imeshfile, imeshfile_d, omeshfile
 
   write(*,*) 'START REGRID ...'
 
@@ -71,62 +85,34 @@ program main
 
   call check( nf90_create(outfile, NF90_64BIT_OFFSET, out_ncid) )
 
-  allocate( input_arr(ncols) )
-
   allocate( ilats(ncols), ilons(ncols) )
   call check( nf90_inq_varid(ncid, 'lat', varid) )
   call check( nf90_get_var( ncid, varid, ilats ) )
   call check( nf90_inq_varid(ncid, 'lon', varid) )
   call check( nf90_get_var( ncid, varid, ilons ) )
 
-  imesh = ESMF_MeshCreate(imeshfile, ESMF_FILEFORMAT_ESMFMESH, rc=rc)
-  if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
+  rc = nf90_inq_dimid(ncid, 'ncol_d', col_d_did)
+  cslam_in = rc == nf90_noerr
 
-  omesh = ESMF_MeshCreate(omeshfile, ESMF_FILEFORMAT_ESMFMESH, rc=rc)
-  if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
+  if (cslam_in) then
+     call check( nf90_inquire_dimension(ncid, col_d_did, len=ncols_d))
+     allocate( ilats_d(ncols_d), ilons_d(ncols_d) )
+     call check( nf90_inq_varid(ncid, 'lat_d', varid) )
+     call check( nf90_get_var( ncid, varid, ilats_d ) )
+     call check( nf90_inq_varid(ncid, 'lon_d', varid) )
+     call check( nf90_get_var( ncid, varid, ilons_d ) )
+     call create_mesh( imeshfile_d, imesh_d, lons_in=ilons_d, lats_in=ilats_d )
+  end if
 
-  ! obtain mesh lats and lons
-  call ESMF_MeshGet(imesh, spatialDim=spatialDim, numOwnedElements=numOwnedElements, rc=rc)
-  if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
+  call create_mesh( imeshfile, imesh, lons_in=ilons, lats_in=ilats )
+  call create_mesh( omeshfile, omesh, ncols_out=ncolso,  lons_out=omeshlons,lats_out=omeshlats )
 
-  !write(*,*) 'spatialDim:',spatialDim
-  !write(*,*) 'numOwnedElements:',numOwnedElements
-  allocate( imeshlats(numOwnedElements), imeshlons(numOwnedElements) )
-  allocate(ownedElemCoords(spatialDim*numOwnedElements))
+  allocate( input_arr(ncols) )
+  if (cslam_in) then
+     allocate( input_arr_d(ncols_d) )
+  endif
 
-  call ESMF_MeshGet(imesh, ownedElemCoords=ownedElemCoords)
-
-  do n = 1,numOwnedElements
-     imeshlons(n) = ownedElemCoords(2*n-1)
-     imeshlats(n) = ownedElemCoords(2*n)
-     if (abs(ilons(n)-imeshlons(n))>1.e-6) then
-        stop "input lons do not match"
-     endif
-     if (abs(ilats(n)-imeshlats(n))>1.e-6) then
-        stop "input lats do not match"
-     endif
-  end do
-  deallocate(ownedElemCoords)
-
-  ! obtain mesh lats and lons
-  call ESMF_MeshGet(omesh, spatialDim=spatialDim, numOwnedElements=numOwnedElements, rc=rc)
-  if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
-
-  !write(*,*) 'spatialDim:',spatialDim
-  !write(*,*) 'numOwnedElements:',numOwnedElements
-  ncolso = numOwnedElements
   allocate( output_arr(ncolso) )
-
-  allocate( omeshlats(numOwnedElements), omeshlons(numOwnedElements) )
-  allocate(ownedElemCoords(spatialDim*numOwnedElements))
-
-  call ESMF_MeshGet(omesh, ownedElemCoords=ownedElemCoords)
-
-  do n = 1,numOwnedElements
-     omeshlons(n) = ownedElemCoords(2*n-1)
-     omeshlats(n) = ownedElemCoords(2*n)
-  end do
-  deallocate(ownedElemCoords)
 
   ! 2D fields
   call ESMF_ArraySpecSet(arrayspec, 1, ESMF_TYPEKIND_R8, rc=rc)
@@ -134,6 +120,11 @@ program main
 
   ifield = ESMF_FieldCreate(imesh, arrayspec, meshloc=ESMF_MESHLOC_ELEMENT, rc=rc)
   if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
+
+  if (cslam_in) then
+     ifield_d = ESMF_FieldCreate(imesh_d, arrayspec, meshloc=ESMF_MESHLOC_ELEMENT, rc=rc)
+     if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
+  endif
 
   ofield = ESMF_FieldCreate(omesh, arrayspec, meshloc=ESMF_MESHLOC_ELEMENT, rc=rc)
   if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
@@ -143,6 +134,13 @@ program main
                               regridmethod=ESMF_REGRIDMETHOD_BILINEAR, rc=rc )
   if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
 
+  if (cslam_in .and. .not.cslam_out) then
+     call ESMF_FieldRegridStore( srcField=ifield_d, dstField=ofield, routeHandle=routeHandle_d, &
+          polemethod=ESMF_POLEMETHOD_ALLAVG, &
+          regridmethod=ESMF_REGRIDMETHOD_BILINEAR, rc=rc )
+     if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
+  endif
+
   ! define dims
   do did = 1,ndims
      call check( nf90_inquire_dimension( ncid, did, name=name, len=len ) )
@@ -151,13 +149,24 @@ program main
      elseif ( did==timedimid ) then
         len=nf90_unlimited
      endif
-     call check( nf90_def_dim( out_ncid, name, len, id ))
+!     if ( did==col_d_did .and. .not.cslam_out ) then
+!     else
+        call check( nf90_def_dim( out_ncid, name, len, id ))
+!     end if
   enddo
 
   ! define vars and copy attributes
   do vid = 1,nvars
      call check( nf90_inquire_variable(ncid, vid, name=name, xtype=xtype, ndims=ndims, natts=natts ))
      call check( nf90_inquire_variable(ncid, vid, dimids=dimids(:ndims)) )
+
+     if ((.not.cslam_out) .and. any(dimids(:ndims)==col_d_did) ) then
+        do n = 1,ndims
+           if (dimids(n)==col_d_did) then
+              dimids(n) = coldimid
+           endif
+        enddo
+     endif
 
      call check( nf90_def_var(out_ncid, name, xtype, dimids(:ndims), id ) )
 
@@ -167,6 +176,7 @@ program main
      enddo
 
   enddo
+
   call datetime(curdate,curtime)
   call getenv('USER',name)
 
@@ -183,13 +193,21 @@ program main
 
 
   do vid = 1,nvars
-     call check( nf90_inquire_variable(ncid, vid, name=name, xtype=xtype, ndims=ndims, natts=natts ))
-     call check( nf90_inquire_variable(ncid, vid, dimids=dimids(:ndims)) )
+     call check( nf90_inquire_variable(out_ncid, vid, name=name, xtype=xtype, ndims=ndims, natts=natts ))
+     call check( nf90_inquire_variable(out_ncid, vid, dimids=dimids(:ndims)) )
 
      if (name == 'lat') then
         call check( nf90_put_var( out_ncid, vid, omeshlats ) )
      elseif (name == 'lon') then
         call check( nf90_put_var( out_ncid, vid, omeshlons ) )
+!!$     elseif (name == 'lat_d') then
+!!$        if (cslam_out) then
+!!$           call check( nf90_put_var( out_ncid, vid, omeshlats_d ) )
+!!$        endif
+!!$     elseif (name == 'lon_d') then
+!!$        if (cslam_out) then
+!!$           call check( nf90_put_var( out_ncid, vid, omeshlons_d ) )
+!!$        endif
      elseif (name == 'date_written') then
         do t=1,ntimes
            call check( nf90_put_var( out_ncid, vid, curdate, start=(/1,t/), count=(/nchars,1/) ) )
@@ -239,15 +257,37 @@ program main
         end if
 
      else
+        call check( nf90_inquire_variable(ncid, vid, dimids=dimids(:ndims)) )
         write(*,*) 'regrid '//trim(name)
+        if ( any(dimids(:ndims) == col_d_did) ) then
+           rh_ptr => routehandle_d
+           ifld_ptr => ifield_d
+           input_arr_ptr => input_arr_d
+           num_cols_in = ncols_d
+           if (cslam_out) then
+              ofld_ptr => ofield_d
+              output_arr_ptr => output_arr_d
+           else
+              ofld_ptr => ofield
+              output_arr_ptr => output_arr
+           end if
+        else
+           rh_ptr => routehandle
+           ifld_ptr => ifield
+           ofld_ptr => ofield
+           input_arr_ptr => input_arr
+           output_arr_ptr => output_arr
+           num_cols_in = ncols
+        endif
+
         ! regrid column dependent varaibles
         if ( any(dimids(:ndims) == levdimid) ) then
            do t=1,ntimes
               do k=1,nlevs
 
-                 call check( nf90_get_var( ncid, vid, input_arr, start=(/1,k,t/), count=(/ncols,1,1/) ) )
-                 call regrid( input_arr, output_arr )
-                 call check( nf90_put_var( out_ncid, vid, output_arr, start=(/1,k,t/), count=(/ncolso,1,1/) ) )
+                 call check( nf90_get_var( ncid, vid, input_arr_ptr, start=(/1,k,t/), count=(/num_cols_in,1,1/) ) )
+                 call regrid( rh_ptr, ifld_ptr, ofld_ptr, input_arr_ptr, output_arr_ptr )
+                 call check( nf90_put_var( out_ncid, vid, output_arr_ptr, start=(/1,k,t/), count=(/ncolso,1,1/) ) )
 
               end do
            end do
@@ -255,40 +295,55 @@ program main
            do t=1,ntimes
               do k=1,nilevs
 
-                 call check( nf90_get_var( ncid, vid, input_arr, start=(/1,k,t/), count=(/ncols,1,1/) ) )
-                 call regrid( input_arr, output_arr )
-                 call check( nf90_put_var( out_ncid, vid, output_arr, start=(/1,k,t/), count=(/ncolso,1,1/) ) )
+                 call check( nf90_get_var( ncid, vid, input_arr_ptr, start=(/1,k,t/), count=(/num_cols_in,1,1/) ) )
+                 call regrid( rh_ptr, ifld_ptr, ofld_ptr, input_arr_ptr, output_arr_ptr )
+                 call check( nf90_put_var( out_ncid, vid, output_arr_ptr, start=(/1,k,t/), count=(/ncolso,1,1/) ) )
 
               end do
            end do
         else
            do t=1,ntimes
 
-              call check( nf90_get_var( ncid, vid, input_arr, start=(/1,t/), count=(/ncols,1/) ) )
-              call regrid( input_arr, output_arr )
-              call check( nf90_put_var( out_ncid, vid, output_arr, start=(/1,t/), count=(/ncolso,1/) ) )
+              call check( nf90_get_var( ncid, vid, input_arr_ptr, start=(/1,t/), count=(/num_cols_in,1/) ) )
+              call regrid( rh_ptr, ifld_ptr, ofld_ptr, input_arr_ptr, output_arr_ptr )
+              call check( nf90_put_var( out_ncid, vid, output_arr_ptr, start=(/1,t/), count=(/ncolso,1/) ) )
 
            end do
         endif
      endif
-
+     nullify(rh_ptr)
+     nullify(ifld_ptr)
+     nullify(input_arr_ptr)
+     nullify(ofld_ptr)
+     nullify(output_arr_ptr)
 
   end do
 
   call check( nf90_close( ncid ) )
   call check( nf90_close( out_ncid ) )
 
+  nullify(rh_ptr)
 
   call ESMF_FieldRegridRelease(routeHandle, rc=rc)
   if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
+  if (cslam_in) then
+     call ESMF_FieldRegridRelease(routeHandle_d, rc=rc)
+     if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
+     call ESMF_FieldDestroy( ifield_d, rc=rc )
+     if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
+  endif
+
   call ESMF_FieldDestroy( ifield, rc=rc )
   if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
   call ESMF_FieldDestroy( ofield, rc=rc )
   if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
+  if (cslam_out) then
+     call ESMF_FieldDestroy( ofield_d, rc=rc )
+     if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
+  end if
 
   call ESMF_Finalize()
   deallocate(dimids)
-  deallocate( imeshlats, imeshlons )
   deallocate( omeshlats, omeshlons )
   deallocate( ilats, ilons )
 
@@ -298,8 +353,77 @@ program main
 
 contains
 
-  subroutine regrid( indata, outdata )
+  subroutine create_mesh( meshfile, esmfmesh, lons_in, lats_in, ncols_out, lons_out, lats_out)
+    character(len=*) :: meshfile
+    type(ESMF_Mesh), intent(out) :: esmfmesh
+    real(r8), optional, intent(in) :: lons_in(:)
+    real(r8), optional, intent(in) :: lats_in(:)
+    integer, optional, intent(out) :: ncols_out
+    real(r8), optional, pointer :: lons_out(:)
+    real(r8), optional, pointer :: lats_out(:)
 
+    integer                 :: spatialDim
+    integer                 :: numOwnedElements
+    real(ESMF_KIND_R8), allocatable :: ownedElemCoords(:)
+
+    real(r8), pointer :: meshlats(:), meshlons(:)
+
+    esmfmesh = ESMF_MeshCreate(meshfile, ESMF_FILEFORMAT_ESMFMESH, rc=rc)
+    if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
+
+    ! obtain mesh lats and lons
+    call ESMF_MeshGet(esmfmesh, spatialDim=spatialDim, numOwnedElements=numOwnedElements, rc=rc)
+    if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
+
+    allocate(meshlats(numOwnedElements), meshlons(numOwnedElements))
+
+    allocate(ownedElemCoords(spatialDim*numOwnedElements))
+
+    call ESMF_MeshGet(esmfmesh, ownedElemCoords=ownedElemCoords)
+
+    do n = 1,numOwnedElements
+       meshlons(n) = ownedElemCoords(2*n-1)
+       meshlats(n) = ownedElemCoords(2*n)
+       if (present(lons_in)) then
+          if (abs(lons_in(n)-meshlons(n))>1.e-6_r8) then
+          if (abs(360._r8-abs(lons_in(n)-meshlons(n)))>1.e-6_r8) then
+             stop "create_mesh: lons do not match"
+          endif
+          endif
+       endif
+       if (present(lats_in)) then
+          if (abs(lats_in(n)-meshlats(n))>1.e-6_r8) then
+             stop "create_mesh: lats do not match"
+          endif
+       endif
+    end do
+
+    if (present(lons_out)) then
+       lons_out => meshlons
+    else
+       deallocate(meshlons)
+    endif
+
+    if (present(lats_out)) then
+       lats_out => meshlats
+    else
+       deallocate(meshlats)
+    endif
+
+    if (present(ncols_out)) then
+       ncols_out = numOwnedElements
+    endif
+
+    deallocate(ownedElemCoords)
+
+  end subroutine create_mesh
+
+
+  subroutine regrid( myroutehandle, infield, outfield, indata, outdata )
+
+    type(ESMF_RouteHandle), intent(inout) :: myrouteHandle
+    type(ESMF_Field), intent(inout) :: infield
+    type(ESMF_Field), intent(inout) :: outfield
     real(r4), intent(in) :: indata(:)
     real(r4), intent(out) :: outdata(:)
 
@@ -307,7 +431,7 @@ contains
     integer :: i
     integer :: lbnd(1), ubnd(1)
 
-    call ESMF_FieldGet( ifield, localDe=0, farrayPtr=fptr1d, &
+    call ESMF_FieldGet( infield, localDe=0, farrayPtr=fptr1d, &
          computationalLBound=lbnd, computationalUBound=ubnd, rc=rc )
     if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
 
@@ -316,10 +440,10 @@ contains
        fptr1d(i) = indata(i)
     end do
 
-    call ESMF_FieldRegrid( ifield, ofield, routeHandle, rc=rc )
+    call ESMF_FieldRegrid( infield, outfield, myrouteHandle, rc=rc )
     if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
 
-    call ESMF_FieldGet(ofield, localDe=0, farrayPtr=fptr1d, rc=rc)
+    call ESMF_FieldGet(outfield, localDe=0, farrayPtr=fptr1d, rc=rc)
     if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
     outdata(:) = fptr1d(:)
 
