@@ -1,6 +1,10 @@
 &options
- infile = '/terminator-data1/fvitt/inputdata/atm/waccm/ic/waccmx_aqua_ne5np4_126L_c191104.nc'
- imeshfile = '/terminator-data1/fvitt/inputdata/atm/cam/coords/ne5np4_esmf_20191204.nc'
- omeshfile = '/terminator-data1/fvitt/inputdata/atm/cam/coords/ne16np4_esmf_191122.nc'
- outfile = './ne16np4_reggrided_test.nc'
+ infile = '/glade/p/cesmdata/cseg/inputdata/atm/waccm/ic/waccmx_aqua_ne5np4_126L_c191104.nc'
+ imeshfile_d = '/glade/work/fvitt/grids/ne5np4_esmf_mesh_c210121.nc'
+ imeshfile_p = '/glade/work/fvitt/grids/ne5np4_esmf_mesh_c210121.nc'
+ omeshfile_p = '/glade/work/fvitt/grids/ne5np4.pg3_esmf_mesh_c210121.nc'
+ omeshfile_d = '/glade/work/fvitt/grids/ne5np4_esmf_mesh_c210121.nc'
+ outfile = 'waccmx_aqua_ne5pg3_126L_demo.nc'
+ phys_flds = 'O1D','O2_1D','O2_1S','OH','N2D','Np','N2p','NOp','O2p','Op','Op2D','Op2P',
+             'e','UI','VI','WI','TElec','TIon','OpTM1'
 /
