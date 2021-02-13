@@ -64,25 +64,21 @@ program main
   character(len=*), parameter :: nml_file = 'options_nml'
   integer :: unitn
   logical :: has_ncol_p_in, has_ncol_d_in
-  logical :: ouput_phys_grid
-  integer :: nphysflds = 0
+
+  namelist /options/ infile, outfile, imeshfile_p, imeshfile_d, omeshfile_p, omeshfile_d, phys_flds
+
+  write(*,*) 'START REGRID ...'
 
   did_ncol_p_in = -huge(1)
   did_ncol_d_in = -huge(1)
   did_ncol_p_out = -huge(1)
   did_ncol_d_out = -huge(1)
 
-  namelist /options/ infile, outfile, imeshfile_p, imeshfile_d, omeshfile_p, omeshfile_d, phys_flds
-
-  write(*,*) 'START REGRID ...'
   open(newunit=unitn, file=trim(nml_file), status='old')
   read(unit=unitn, nml=options)
   close(unitn)
 
   call ESMF_Initialize()
-
-  nphysflds = count( len_trim(phys_flds(:))>0 )
-  ouput_phys_grid = nphysflds>0
 
   write(*,*) 'infile: '//trim(infile)
   call check( nf90_open(infile, nf90_nowrite, ncid_in) )
@@ -274,7 +270,7 @@ program main
   endif
 
   call datetime(curdate,curtime)
-  call getenv('USER',name)
+  call get_environment_variable(name='USER',value=name,status=rc)
 
   ! global attributes
   call check( nf90_put_att( ncid_out, nf90_global, 'created_by', &
@@ -498,12 +494,13 @@ contains
     real(r8), optional, pointer :: lons_out(:)
     real(r8), optional, pointer :: lats_out(:)
 
-    integer                 :: spatialDim
-    integer                 :: numOwnedElements
+    integer :: spatialDim
+    integer :: numOwnedElements
     real(ESMF_KIND_R8), allocatable :: ownedElemCoords(:)
 
     real(r8), pointer :: meshlats(:), meshlons(:)
-
+    integer :: n
+    
     esmfmesh = ESMF_MeshCreate(meshfile, ESMF_FILEFORMAT_ESMFMESH, rc=rc)
     if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
 

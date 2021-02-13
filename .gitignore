@@ -1,1 +1,4 @@
 bld
+regridic.exe
+*.ESMF_LogFile
+*.nc
