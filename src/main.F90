@@ -11,8 +11,9 @@ program main
   integer, parameter :: MAX_NPFLDS=100
 
   character(len=512) :: infile='NONE', outfile='NONE', imeshfile_p='NONE', imeshfile_d='NONE', omeshfile_p='NONE', omeshfile_d='NONE'
+  character(len=512) :: vertfile='NONE'
   character(len=32) :: phys_flds(MAX_NPFLDS) = ' '
-  integer :: ncid_in, ncid_out
+  integer :: ncid_in, ncid_out, ncid_vert
 
   integer :: varid, ndims, nvars, nvars_out
   integer :: vid, vid_in, did, len, id, len1, len2
@@ -27,7 +28,8 @@ program main
   integer :: rc
 
   integer :: ncols_p_in, ncols_d_in, ncols_p_out, ncols_d_out
-  integer :: xtype, natts, t, n, ntimes, nlevs, nilevs, numlevs, k
+  integer :: nlevs_out, nilevs_out
+  integer :: xtype, natts, t, n, ntimes, nlevs_in, nilevs_in, numlevs, k
   integer :: num_cols_in, num_cols_out
   real(r8), pointer :: ilats_p(:), ilons_p(:)
   real(r8), pointer :: ilats_d(:), ilons_d(:)
@@ -64,8 +66,17 @@ program main
   character(len=*), parameter :: nml_file = 'options_nml'
   integer :: unitn
   logical :: has_ncol_p_in, has_ncol_d_in
+  logical :: vert_interp
+
+  real(r8), allocatable, target :: levs_in(:), ilevs_in(:)
+  real(r8), allocatable, target :: levs_out(:), ilevs_out(:)
+  real(r8), pointer :: levs_in_ptr(:)
+  real(r8), pointer :: levs_out_ptr(:)
+  integer :: num_levels_in
+  real(r8), allocatable :: hyam_out(:), hybm_out(:), hyai_out(:), hybi_out(:)
 
   namelist /options/ infile, outfile, imeshfile_p, imeshfile_d, omeshfile_p, omeshfile_d, phys_flds
+  namelist /options/ vertfile
 
   write(*,*) 'START REGRID ...'
 
@@ -83,6 +94,13 @@ program main
   write(*,*) 'infile: '//trim(infile)
   call check( nf90_open(infile, nf90_nowrite, ncid_in) )
 
+  vert_interp = vertfile/='NONE'
+  if (vert_interp) then
+     call check( nf90_open(vertfile, nf90_nowrite, ncid_vert) )
+  else
+     ncid_vert = ncid_in
+  endif
+
   rc = nf90_inq_dimid(ncid_in, 'ncol', did_ncol_p_in)
   has_ncol_p_in = rc == nf90_noerr
 
@@ -99,8 +117,8 @@ program main
   call check( nf90_inq_dimid(ncid_in, 'ilev', ilevdimid) )
 
   call check( nf90_inquire_dimension(ncid_in, timedimid, len=ntimes))
-  call check( nf90_inquire_dimension(ncid_in, ilevdimid, len=nilevs))
-  call check( nf90_inquire_dimension(ncid_in, levdimid, len=nlevs))
+  call check( nf90_inquire_dimension(ncid_in, ilevdimid, len=nilevs_in))
+  call check( nf90_inquire_dimension(ncid_in, levdimid, len=nlevs_in))
 
   call check( nf90_create(outfile, NF90_64BIT_OFFSET, ncid_out) )
 
@@ -175,6 +193,32 @@ program main
   allocate( dimids_in(ndims) )
   allocate(dimids_out(ndims))
 
+  call check( nf90_inq_dimid( ncid_vert, 'lev', did ) )
+  call check( nf90_inquire_dimension( ncid_vert, did, len=nlevs_out ) )
+  call check( nf90_inq_dimid( ncid_vert, 'ilev', did ) )
+  call check( nf90_inquire_dimension( ncid_vert, did, len=nilevs_out ) )
+
+  allocate( levs_out(nlevs_out), ilevs_out(nilevs_out) )
+  call check( nf90_inq_varid(ncid_vert, 'lev', varid) )
+  call check( nf90_get_var( ncid_vert, varid,  levs_out) )
+  call check( nf90_inq_varid(ncid_vert, 'ilev', varid) )
+  call check( nf90_get_var( ncid_vert, varid, ilevs_out ) )
+  allocate( hyam_out(nlevs_out),  hybm_out(nlevs_out), hyai_out(nilevs_out), hybi_out(nilevs_out) )
+  call check( nf90_inq_varid(ncid_vert, 'hyam', varid) )
+  call check( nf90_get_var( ncid_vert, varid,  hyam_out) )
+  call check( nf90_inq_varid(ncid_vert, 'hybm', varid) )
+  call check( nf90_get_var( ncid_vert, varid,  hybm_out) )
+  call check( nf90_inq_varid(ncid_vert, 'hyai', varid) )
+  call check( nf90_get_var( ncid_vert, varid, hyai_out ) )
+  call check( nf90_inq_varid(ncid_vert, 'hybi', varid) )
+  call check( nf90_get_var( ncid_vert, varid, hybi_out ) )
+
+  allocate( levs_in(nlevs_in), ilevs_in(nilevs_in) )
+  call check( nf90_inq_varid(ncid_in, 'lev', varid) )
+  call check( nf90_get_var( ncid_in, varid, levs_in) )
+  call check( nf90_inq_varid(ncid_in, 'ilev', varid) )
+  call check( nf90_get_var( ncid_in, varid, ilevs_in ) )
+
   ! define dims
   do did = 1,ndims
      call check( nf90_inquire_dimension( ncid_in, did, name=name, len=len ) )
@@ -183,6 +227,10 @@ program main
         len=ncols_p_out
      elseif ( name=='ncol_d' ) then
         len=ncols_d_out
+     elseif ( name=='lev' ) then
+        len=nlevs_out
+     elseif ( name=='ilev' ) then
+        len=nilevs_out
      elseif ( did==timedimid ) then
         len=nf90_unlimited
      endif
@@ -280,6 +328,9 @@ program main
   call check( nf90_put_att( ncid_out, nf90_global, 'src_d_grid', trim(imeshfile_d) ) )
   call check( nf90_put_att( ncid_out, nf90_global, 'dst_p_grid', trim(omeshfile_p) ) )
   call check( nf90_put_att( ncid_out, nf90_global, 'dst_d_grid', trim(omeshfile_d) ) )
+  if (vert_interp) then
+     call check( nf90_put_att( ncid_out, nf90_global, 'vertical_grid', trim(vertfile) ) )
+  end if
 
   ! end of define phase
   call check( nf90_enddef( ncid_out ) )
@@ -302,13 +353,40 @@ program main
      call check( nf90_put_var( ncid_out, vid, olats_d ) )
   endif
 
+  rc = nf90_inq_varid(ncid_out, 'lev', vid)
+  if (rc == nf90_noerr) then
+     call check( nf90_put_var( ncid_out, vid, levs_out ) )
+  endif
+  rc = nf90_inq_varid(ncid_out, 'hyam', vid)
+  if (rc == nf90_noerr) then
+     call check( nf90_put_var( ncid_out, vid, hyam_out ) )
+  endif
+  rc = nf90_inq_varid(ncid_out, 'hybm', vid)
+  if (rc == nf90_noerr) then
+     call check( nf90_put_var( ncid_out, vid, hybm_out ) )
+  endif
+
+  rc = nf90_inq_varid(ncid_out, 'ilev', vid)
+  if (rc == nf90_noerr) then
+     call check( nf90_put_var( ncid_out, vid, ilevs_out ) )
+  endif
+  rc = nf90_inq_varid(ncid_out, 'hyai', vid)
+  if (rc == nf90_noerr) then
+     call check( nf90_put_var( ncid_out, vid, hyai_out ) )
+  endif
+  rc = nf90_inq_varid(ncid_out, 'hybi', vid)
+  if (rc == nf90_noerr) then
+     call check( nf90_put_var( ncid_out, vid, hybi_out ) )
+  endif
+
   call check( nf90_inquire(ncid_out, nVariables=nvars_out) )
 
   do vid = 1,nvars_out
      call check( nf90_inquire_variable(ncid_out, vid, name=name, xtype=xtype, ndims=ndims, natts=natts ))
      call check( nf90_inquire_variable(ncid_out, vid, dimids=dimids_out(:ndims)) )
 
-     if (name == 'lat' .or. name == 'lon' .or. name == 'lat_d' .or. name == 'lon_d') then
+     if (name == 'lat' .or. name == 'lon' .or. name == 'lat_d' .or. name == 'lon_d' .or. &
+         name == 'lev' .or. name == 'ilev' .or. name == 'hyam' .or. name == 'hybm'.or. name == 'hyai' .or. name == 'hybi' ) then
         cycle
      elseif (name == 'date_written') then
         do t=1,ntimes
@@ -402,9 +480,15 @@ program main
 
         numlevs = 0
         if  ( any(dimids_in(:ndims) == levdimid) ) then
-           numlevs = nlevs
+           numlevs = nlevs_out
+           levs_in_ptr => levs_in
+           levs_out_ptr => levs_out
+           num_levels_in = nlevs_in
         elseif ( any(dimids_in(:ndims) == ilevdimid) ) then
-           numlevs = nilevs
+           numlevs = nilevs_out
+           levs_in_ptr => ilevs_in
+           levs_out_ptr => ilevs_out
+           num_levels_in = nilevs_in
         endif
 
         ! regrid column dependent varaibles
@@ -413,7 +497,11 @@ program main
            do t=1,ntimes
               do k=1,numlevs
 
-                 call check( nf90_get_var( ncid_in, vid_in, input_arr_ptr, start=(/1,k,t/), count=(/num_cols_in,1,1/) ) )
+                 if (vert_interp) then
+                    call get_field_in( t, num_levels_in, levs_in_ptr, levs_out_ptr(k), input_arr_ptr )
+                 else
+                    call check( nf90_get_var( ncid_in, vid_in, input_arr_ptr, start=(/1,k,t/), count=(/num_cols_in,1,1/) ) )
+                 endif
                  call regrid( rh_ptr, ifld_ptr, ofld_ptr, input_arr_ptr, output_arr_ptr )
                  call check( nf90_put_var( ncid_out, vid, output_arr_ptr, start=(/1,k,t/), count=(/num_cols_out,1,1/) ) )
 
@@ -484,6 +572,50 @@ program main
 
 contains
 
+  subroutine get_field_in( t, nlevs_in, plevs_in, plev, fld )
+
+    integer, intent(in) :: t,nlevs_in
+    real(r8), intent(in) :: plevs_in(nlevs_in)
+    real(r8), intent(in) :: plev
+    real(r4), intent(out) :: fld(num_cols_in)
+
+    real(r4) :: fld1(num_cols_in)
+    real(r4) :: fld2(num_cols_in)
+    real(r8) :: llev, llev1, llev2
+    integer :: n, klev
+
+    n = size(plevs_in)
+
+    if (plev <= plevs_in(1)) then
+       call check( nf90_get_var( ncid_in, vid_in, fld, start=(/1,1,t/), count=(/num_cols_in,1,1/) ) )
+    else if (plev >= plevs_in(n)) then
+       call check( nf90_get_var( ncid_in, vid_in, fld, start=(/1,n,t/), count=(/num_cols_in,1,1/) ) )
+    else
+
+       find_klev: do klev = 1,n
+          if (plev <= plevs_in(klev)) then
+             exit find_klev
+          end if
+       end do find_klev
+
+       llev1 = log(plevs_in(klev-1))
+       llev2 = log(plevs_in(klev))
+       llev = log(plev)
+
+       if (llev<llev1 .or. llev>llev2) then
+         print*, 'Error in get_field_in llev,llev1,llev2: ',llev,llev1,llev2
+         stop "ERROR"
+       endif
+
+       call check( nf90_get_var( ncid_in, vid_in, fld1, start=(/1,klev-1,t/), count=(/num_cols_in,1,1/) ) )
+       call check( nf90_get_var( ncid_in, vid_in, fld2, start=(/1,klev,t/), count=(/num_cols_in,1,1/) ) )
+
+       fld(:) = fld1(:) + (llev-llev1)*(fld2(:)-fld1(:))/(llev2-llev1)
+
+    endif
+
+  end subroutine get_field_in
+
   subroutine create_mesh( meshfile, esmfmesh, errstr, lons_in, lats_in, ncols_out, lons_out, lats_out)
     character(len=*) :: meshfile
     type(ESMF_Mesh), intent(out) :: esmfmesh
@@ -500,7 +632,7 @@ contains
 
     real(r8), pointer :: meshlats(:), meshlons(:)
     integer :: n
-    
+
     esmfmesh = ESMF_MeshCreate(meshfile, ESMF_FILEFORMAT_ESMFMESH, rc=rc)
     if (rc/=ESMF_SUCCESS) call ESMF_Finalize(endflag=ESMF_END_ABORT)
 
