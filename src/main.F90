@@ -10,7 +10,8 @@ program main
 
   integer, parameter :: MAX_NPFLDS=100
 
-  character(len=512) :: infile='NONE', outfile='NONE', imeshfile_p='NONE', imeshfile_d='NONE', omeshfile_p='NONE', omeshfile_d='NONE'
+  character(len=512) :: infile='NONE', outfile='NONE', imeshfile_p='NONE'
+  character(len=512) :: imeshfile_d='NONE', omeshfile_p='NONE', omeshfile_d='NONE'
   character(len=512) :: vertfile='NONE'
   character(len=32) :: phys_flds(MAX_NPFLDS) = ' '
   integer :: ncid_in, ncid_out, ncid_vert
@@ -113,6 +114,10 @@ program main
   endif
 
   call check( nf90_inquire(ncid_in, nDimensions=ndims, nVariables=nvars, unlimitedDimid=timedimid) )
+  if (timedimid<1) then
+     call check( nf90_inq_dimid(ncid_in, 'time', timedimid) )
+  end if
+
   call check( nf90_inq_dimid(ncid_in, 'lev',  levdimid) )
   call check( nf90_inq_dimid(ncid_in, 'ilev', ilevdimid) )
 
@@ -141,7 +146,7 @@ program main
      call check( nf90_get_var( ncid_in, varid, ilats_d ) )
      call check( nf90_inq_varid(ncid_in, 'lon_d', varid) )
      call check( nf90_get_var( ncid_in, varid, ilons_d ) )
-     call create_mesh( imeshfile_d, imesh_d, 'NPUT_D', lons_in=ilons_d, lats_in=ilats_d )
+     call create_mesh( imeshfile_d, imesh_d, 'INPUT_D', lons_in=ilons_d, lats_in=ilats_d )
   else
      call create_mesh( imeshfile_d, imesh_d, 'INPUT_D', ncols_out=ncols_d_in, lons_out=ilons_d, lats_out=ilats_d )
   end if
@@ -253,7 +258,7 @@ program main
      call check( nf90_inquire_variable(ncid_in, vid, name=name, xtype=xtype, ndims=ndims, natts=natts ))
      call check( nf90_inquire_variable(ncid_in, vid, dimids=dimids_in(:ndims) ))
 
-     if (name == 'area_d' .or. name == 'lat' .or. name == 'lon' .or. name == 'lat_d' .or. name == 'lon_d') then
+     if (name == 'area' .or. name == 'area_d' .or. name == 'lat' .or. name == 'lon' .or. name == 'lat_d' .or. name == 'lon_d') then
         cycle
      endif
 
@@ -338,6 +343,9 @@ program main
   ! set the phys and dyn column coordinate varialbles in the output file
   rc = nf90_inq_varid(ncid_out, 'lon', vid)
   if (rc == nf90_noerr) then
+     where (olons_p >= 360._r8)
+        olons_p = olons_p-360._r8
+     end where
      call check( nf90_put_var( ncid_out, vid, olons_p ) )
   endif
   rc = nf90_inq_varid(ncid_out, 'lat', vid)
@@ -346,6 +354,9 @@ program main
   endif
   rc = nf90_inq_varid(ncid_out, 'lon_d', vid)
   if (rc == nf90_noerr) then
+     where (olons_d >= 360._r8)
+        olons_d = olons_d-360._r8
+     end where
      call check( nf90_put_var( ncid_out, vid, olons_d ) )
   endif
   rc = nf90_inq_varid(ncid_out, 'lat_d', vid)
